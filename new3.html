@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dehradun-Delhi Route Optimizer (C++ WASM)</title>
+    <script src="logic.js"></script>
+    
+    <style>
+        :root {
+            --primary-color: #1d2935;
+            --secondary-color: #3498db;
+            --background-color: #f5f6fa;
+            --border-color: #dcdde1;
+        }
+        body {
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--background-color);
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { text-align: center; margin-bottom: 30px; }
+        
+        .traffic-controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            margin-bottom: 25px;
+        }
+        .traffic-control-item {
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+        }
+        .traffic-label {
+            display: flex;
+            justify-content: space-between;
+            font-weight: 600;
+            font-size: 13px;
+            margin-bottom: 5px;
+        }
+        .traffic-value {
+            padding: 1px 6px;
+            border-radius: 4px;
+            color: white;
+            font-size: 11px;
+        }
+        .traffic-slider { width: 100%; cursor: pointer; }
+
+        .visualization {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+        }
+        .route-display {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            height: 550px; /* Increased height for better visibility */
+            position: relative;
+            overflow: hidden;
+        }
+        #routeCanvas { width: 100%; height: 100%; }
+        
+        .stats-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        .stats-item {
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .stats-label { color: #7f8c8d; font-size: 14px; margin-bottom: 5px; }
+        .stats-value { font-weight: bold; color: var(--primary-color); font-size: 16px; word-wrap: break-word; }
+
+        button {
+            background-color: var(--secondary-color);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: 0.3s;
+            margin-bottom: 20px;
+        }
+        button:hover { background-color: #2980b9; transform: translateY(-2px); }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>Dehradun-Delhi Interactive Route Optimizer</h1>
+        <p>Real-time C++ Genetic Algorithm & Ant Colony Optimization</p>
+    </div>
+
+    <div class="traffic-controls" id="trafficControls"></div>
+
+    <button id="startBtn" onclick="runOptimization()">Calculate Optimal Route</button>
+
+    <div class="visualization">
+        <div class="route-display">
+            <canvas id="routeCanvas"></canvas>
+        </div>
+        
+        <div class="stats-panel">
+            <div class="stats-item">
+                <div class="stats-label">Algorithm Status</div>
+                <div class="stats-value" id="status">Ready</div>
+            </div>
+            <div class="stats-item">
+                <div class="stats-label">Best Route Sequence</div>
+                <div class="stats-value" id="currentRoute" style="color: #2980b9;">-</div>
+            </div>
+            <div class="stats-item">
+                <div class="stats-label">Total Optimized Distance</div>
+                <div class="stats-value" id="bestDist">0.00 units</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 10 Cities with Coordinates mapped for a Dehradun -> Delhi flow
+    const locations = [
+        { name: "ISBT Dehradun", x: 50, y: 50 },
+        { name: "Premnagar", x: 100, y: 120 },
+        { name: "Vikasnagar", x: 150, y: 80 },
+        { name: "Herbertpur", x: 220, y: 180 },
+        { name: "Biharigarh", x: 300, y: 250 },
+        { name: "Roorkee", x: 380, y: 200 },
+        { name: "Muzaffarnagar", x: 480, y: 300 },
+        { name: "Meerut", x: 580, y: 350 },
+        { name: "Modinagar", x: 680, y: 420 },
+        { name: "Delhi", x: 750, y: 480 }
+    ];
+
+    const connections = [
+        ["ISBT Dehradun", "Premnagar"], ["ISBT Dehradun", "Vikasnagar"],
+        ["Premnagar", "Vikasnagar"], ["Premnagar", "Herbertpur"],
+        ["Vikasnagar", "Biharigarh"], ["Herbertpur", "Roorkee"],
+        ["Biharigarh", "Roorkee"], ["Roorkee", "Muzaffarnagar"],
+        ["Muzaffarnagar", "Meerut"], ["Meerut", "Modinagar"],
+        ["Modinagar", "Delhi"]
+    ];
+
+    const canvas = document.getElementById('routeCanvas');
+    const ctx = canvas.getContext('2d');
+
+    function initUI() {
+        const container = document.getElementById('trafficControls');
+        connections.forEach(([from, to]) => {
+            const div = document.createElement('div');
+            div.className = 'traffic-control-item';
+            div.innerHTML = `
+                <div class="traffic-label">
+                    <span>${from} → ${to}</span>
+                    <span class="traffic-value" style="background:#f1c40f">Normal</span>
+                </div>
+                <input type="range" class="traffic-slider" min="0.5" max="2.0" step="0.1" value="1.0" 
+                       oninput="updateTraffic(this, '${from}', '${to}')">
+            `;
+            container.appendChild(div);
+        });
+        drawMap([]); 
+    }
+
+    function updateTraffic(slider, from, to) {
+        const val = parseFloat(slider.value);
+        const label = slider.parentElement.querySelector('.traffic-value');
+        label.textContent = val > 1.2 ? "High" : (val < 0.8 ? "Low" : "Normal");
+        label.style.background = val > 1.2 ? "#e74c3c" : (val < 0.8 ? "#2ecc71" : "#f1c40f");
+
+        if (typeof Module !== 'undefined' && Module._updateSingleTraffic) {
+            const fromIdx = locations.findIndex(l => l.name === from);
+            const toIdx = locations.findIndex(l => l.name === to);
+            Module._updateSingleTraffic(fromIdx, toIdx, val);
+        }
+    }
+
+    function runOptimization() {
+        document.getElementById('status').textContent = "Evolving...";
+        
+        setTimeout(() => {
+            if (typeof Module !== 'undefined' && Module.ccall) {
+                // Run C++ GA Main
+                Module.ccall('main', 'number', [], []);
+
+                // Pull Results
+                const dist = Module.ccall('getBestDistance', 'number', [], []);
+                const resultStr = Module.ccall('getBestRouteString', 'string', [], []);
+                
+                if (resultStr) {
+                    const path = resultStr.split(',').map(Number);
+                    drawMap(path);
+                    document.getElementById('currentRoute').textContent = resultStr.replaceAll(',', ' → ');
+                    document.getElementById('bestDist').textContent = dist.toFixed(2) + " units";
+                    document.getElementById('status').textContent = "Optimal Path Found!";
+                }
+            }
+        }, 50);
+    }
+
+    function drawMap(pathIndices) {
+        // Set Canvas internal resolution to match screen display size
+        const containerWidth = canvas.parentElement.clientWidth;
+        const containerHeight = canvas.parentElement.clientHeight;
+        canvas.width = containerWidth;
+        canvas.height = containerHeight;
+        
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Auto-Scaling: Maps our 800x550 coordinates into the actual box size
+        const scaleX = containerWidth / 850; 
+        const scaleY = containerHeight / 550;
+
+        // 1. Draw Path Lines
+        if (pathIndices.length > 1) {
+            ctx.beginPath();
+            ctx.strokeStyle = "#3498db";
+            ctx.lineWidth = 3;
+            ctx.setLineDash([5, 5]); // Dash for "Optimized Path"
+            for (let i = 0; i < pathIndices.length - 1; i++) {
+                const start = locations[pathIndices[i]];
+                const end = locations[pathIndices[i+1]];
+                if (start && end) {
+                    ctx.moveTo(start.x * scaleX, start.y * scaleY);
+                    ctx.lineTo(end.x * scaleX, end.y * scaleY);
+                }
+            }
+            ctx.stroke();
+        }
+
+        // 2. Draw Cities (Nodes)
+        locations.forEach((loc, i) => {
+            // Dehradun is red, others are dark blue
+            ctx.fillStyle = (i === 0) ? "#e74c3c" : "#2c3e50";
+            ctx.beginPath();
+            ctx.arc(loc.x * scaleX, loc.y * scaleY, 7, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Text Label
+            ctx.fillStyle = "#2c3e50";
+            ctx.font = "bold 11px Arial";
+            ctx.fillText(loc.name, (loc.x * scaleX) + 10, (loc.y * scaleY) + 5);
+        });
+    }
+
+    window.onload = initUI;
+</script>
+</body>
+</html>
